@@ -69,7 +69,7 @@ def extract_invoice_info(page_html: str):
     return invoice_number, formatted_date
 
 
-def main(html_file: Path, out_dir: Path, headless: bool):
+def main(html_file: Path, out_dir: Path, headless: bool, early_stop: bool):
     html = html_file.read_text(encoding="utf-8")
     urls = extract_invoice_links(html)
     if not urls:
@@ -78,6 +78,8 @@ def main(html_file: Path, out_dir: Path, headless: bool):
 
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Found {len(urls)} invoice links. Saving to: {out_dir.resolve()}")
+    if early_stop:
+        print("Early stop enabled: will exit on first duplicate.")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
@@ -94,6 +96,18 @@ def main(html_file: Path, out_dir: Path, headless: bool):
             # Extract invoice number and payment date from the page
             page_html = page.content()
             invoice_number, payment_date = extract_invoice_info(page_html)
+
+            # Check if file already exists (if we have invoice info)
+            if invoice_number and payment_date:
+                filename = f"{payment_date}-{invoice_number}.pdf"
+                dest_path = out_dir / filename
+                if dest_path.exists():
+                    if early_stop:
+                        print(f"  → already exists: {filename} (stopping)")
+                        break
+                    else:
+                        print(f"  → already exists: {filename} (skipping)")
+                        continue
 
             # Try multiple possible button texts
             clicked = False
@@ -155,6 +169,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--headed", action="store_true", help="Run with a visible browser window."
     )
+    parser.add_argument(
+        "--no-early-stop",
+        action="store_true",
+        help="Don't stop on first duplicate; skip and continue (useful for filling holes).",
+    )
     args = parser.parse_args()
 
-    main(Path(args.html), Path(args.out), headless=not args.headed)
+    main(
+        Path(args.html),
+        Path(args.out),
+        headless=not args.headed,
+        early_stop=not args.no_early_stop,
+    )
